@@ -3,6 +3,10 @@
 Two offline reproductions against the official `perp-maker` example at commit
 `25798660bbe4674a6f83a960b202852896e2fed4`.
 
+[DoraHacks build](https://dorahacks.io/build/50078). The build is published;
+the event submission returned "Failed to Submit Build" on October 20, 2026.
+Organizer whitelist approval and bounty acceptance remain unconfirmed.
+
 | Report | Proposed severity | Observed result |
 |---|---|---|
 | [Position cap](feedback/001-position-cap.md) | major | A 90 USDso position with a 100 USDso cap still permits a 25 USDso increasing quote. |
