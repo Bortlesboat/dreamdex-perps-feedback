@@ -1,0 +1,73 @@
+diff --git a/strategies/perp-maker/src/index.ts b/strategies/perp-maker/src/index.ts
+index 56787b6..c5234dd 100644
+--- a/strategies/perp-maker/src/index.ts
++++ b/strategies/perp-maker/src/index.ts
+@@ -57,6 +57,7 @@ interface Quote {
+   bid?: bigint;
+   ask?: bigint;
+   atMark: number;
++  retry?: boolean;
+ }
+ 
+ /**
+@@ -121,12 +122,13 @@ async function main(): Promise<void> {
+     // Re-quote only when the mark has moved past the trigger. Cancelling and
+     // replacing on every cycle burns gas and loses queue position for nothing.
+     const drift = resting.atMark > 0 ? Math.abs(mark - resting.atMark) / resting.atMark * 10_000 : Infinity;
+-    if (drift < REQUOTE_BPS) {
++    const reprice = drift >= REQUOTE_BPS;
++    if (!reprice && !resting.retry) {
+       await sleep(REFRESH_MS, stopped);
+       continue;
+     }
+ 
+-    if (resting.bid || resting.ask) {
++    if (reprice && (resting.bid || resting.ask)) {
+       for (const id of [resting.bid, resting.ask]) {
+         if (id !== undefined) await cancelQuietly(ctx, market, id);
+       }
+@@ -142,14 +144,16 @@ async function main(): Promise<void> {
+     const bidPx = BigInt(Math.round(mark * (1 - half - skew) * 1e18));
+     const askPx = BigInt(Math.round(mark * (1 + half - skew) * 1e18));
+ 
+-    const wanted = sizeForNotional(NOTIONAL, fresh.info, mark);
+-    const next: Quote = { atMark: mark };
++    const next: Quote = { ...resting, atMark: reprice ? mark : resting.atMark, retry: false };
+ 
+     // If one leg throws after the other is already resting, pull the placed leg
+     // before the error propagates: a bot that exits here would otherwise leave a
+     // one-sided quote trading on the book with nobody watching it.
+     try {
+       for (const [side, price] of [["long", bidPx] as const, ["short", askPx] as const]) {
++        const leg = side === "long" ? "bid" : "ask";
++        // Recovery keeps the healthy leg's queue position.
++        if (next[leg] !== undefined) continue;
+         // Do not add to a side that is already at the cap. The other side stays
+         // quoted, which is how the position comes back rather than getting stuck.
+         const wouldExceed = side === "long" ? inventory >= MAX_POSITION : inventory <= -MAX_POSITION;
+@@ -157,11 +161,17 @@ async function main(): Promise<void> {
+           console.log(`${side} side held back: inventory ${inventory.toFixed(2)} USDso is at the cap`);
+           continue;
+         }
++        // Value both possible fills at this mark. Clamp before lot alignment
++        // and the independent pool margin ceiling, including position flips.
++        const headroom = Math.max(0, MAX_POSITION - (side === "long" ? inventory : -inventory));
++        const wanted = sizeForNotional(Math.min(NOTIONAL, headroom), fresh.info, mark);
++        if (wanted === 0n) continue;
+         const sized = me
+           ? await sizeOrder(ctx.exchange, { market: fresh, account: me, side, price, wanted })
+           : { ok: true as const, quantity: wanted };
+         if (!sized.ok) {
+           console.log(`${side} side skipped: ${sized.reason}`);
++          next.retry = true;
+           continue;
+         }
+         const placed = await placePerp({
+@@ -175,6 +185,7 @@ async function main(): Promise<void> {
+         });
+         if (side === "long") next.bid = placed.orderId;
+         else next.ask = placed.orderId;
++        if (placed.orderId === undefined && !ctx.config.dryRun) next.retry = true;
+       }
+     } catch (err) {
+       for (const id of [next.bid, next.ask]) {

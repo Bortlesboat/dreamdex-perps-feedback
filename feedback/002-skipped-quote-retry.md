@@ -7,9 +7,9 @@ Area: app
 
 1. Follow the pinned installation in the repository README.
 2. Run `npm exec -- vitest run packages/perp-core/tests/bounty-maker.test.ts --reporter=verbose`.
-3. Inspect the second test. The mark is 100 for two iterations; both first-cycle
-   placements return `{sent:false, filled:0n, noFill:true}`, exactly the helper's
-   result when `PostOnlyWouldCross` is handled.
+3. Inspect the actual-rejection test. The mark is 100 for two iterations; the
+   controlled SDK boundary throws `PostOnlyWouldCross`. The real `placePerp`
+   helper catches it and returns `{sent:false, filled:0n, noFill:true}`.
 4. There are no resting order IDs, but the strategy skips all quote attempts
    during the second cycle.
 
@@ -40,17 +40,24 @@ the drift check precedes missing-order detection, and `resting = next` retains
 the mark after failed-to-rest quotes.
 
 [Pinned order helper](https://github.com/somnia-chain/dreamdex-bot-kit/blob/25798660bbe4674a6f83a960b202852896e2fed4/packages/perp-core/src/orders.ts)
-catches `PostOnlyWouldCross` and returns the mock's exact shape.
+catches the injected `PostOnlyWouldCross` exception during the reproduction.
 
 This is a deterministic strategy-control-flow reproduction, not evidence of a
-currently broken live market. The harness mocks both rejections to isolate the
-retry branch.
+currently broken live market. A moving-mark negative control already retries
+upstream. A partial-rejection case shows the healthy ask remains live while the
+bid is missing.
 
 ## Suggested correction
 
 Track each quote's resting state independently from mark drift. Missing quotes
 need a retry path; drift alone should not suppress recovery. A deliberate side
 disablement at the inventory cap should remain distinct from a failed placement.
+
+The [candidate patch](../repro/candidate-fix.patch) retries the missing leg while
+preserving the healthy leg's queue position. Two rejected quotes produce four
+attempts over two cycles; a rejected bid plus successful ask produces three,
+with the successful ask cancelled only at final shutdown. Healthy quotes and
+an intentionally disabled side retain their upstream behavior.
 
 ## Environment
 

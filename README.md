@@ -8,7 +8,10 @@ Two offline reproductions against the official `perp-maker` example at commit
 | [Position cap](feedback/001-position-cap.md) | major | A 90 USDso position with a 100 USDso cap still permits a 25 USDso increasing quote. |
 | [Skipped quote retry](feedback/002-skipped-quote-retry.md) | normal | After both quotes are skipped, a second unchanged-mark cycle places no replacement quotes. |
 
-The harness imports the actual upstream strategy and mocks its exchange boundary.
+The harness imports the actual upstream strategy and retains the real `sizeForNotional`,
+`sizeOrder`, `placePerp`, `positionIn` and cancellation helpers. It controls exchange
+responses, startup checks and time. `PostOnlyWouldCross` is thrown at the SDK call
+boundary and handled by the real helper.
 It does not reproduce network execution or assert that any user lost funds.
 No wallet, credentials, RPC calls or transactions are used.
 
@@ -25,20 +28,51 @@ npm ci --ignore-scripts --no-audit --no-fund
 npm exec -- vitest run packages/perp-core/tests --reporter=verbose
 ```
 
-Expected: 33 tests pass, including two tests asserting the current defective behavior.
-These tests document the defects; a corrected strategy should change the two repro assertions.
+Expected: 42 tests pass: 31 upstream tests and 11 reproduction/control cases.
+Seven cases assert the current defects; four controls exercise behavior that already works.
 Verified on Windows and macOS on October 20, 2026.
+
+## Test a candidate correction
+
+The same harness also expresses the desired contract. Against unmodified upstream,
+the following test command fails **7 cases** and passes **4 controls**:
+
+```powershell
+$env:EXPECT_MAKER_FIX='1'
+npm exec -- vitest run packages/perp-core/tests/bounty-maker.test.ts
+```
+
+From the cloned upstream directory, apply the supplied patch and rerun:
+
+```powershell
+git apply ../repro/candidate-fix.patch
+npm exec -- vitest run packages/perp-core/tests
+npm run typecheck -w perp-maker
+Remove-Item Env:EXPECT_MAKER_FIX
+```
+
+Patched result: **42 tests pass**, including all 11 contract/control cases; strategy
+type checking passes. On macOS/Linux prefix test commands with `EXPECT_MAKER_FIX=1`.
+The patch preserves a successful quote while retrying its missing counterpart. It
+clamps quantity to signed position headroom before real lot alignment and pool sizing.
+It does not claim to enforce a continuous risk limit through mark changes, external
+orders, fill/cancel races or cancellations that fail. Those require live order-state
+reconciliation beyond these two reports.
 
 On macOS or Linux, replace `Copy-Item` with `cp` and `Set-Location upstream`
 with `cd upstream`. The remaining commands are identical.
 
-Recorded output:
+Measured comparison:
 
 ```text
-CAP_REPRO {"startingInventory":90,"configuredCap":100,"bidNotionalAtMark":25,"possibleInventoryAfterFill":115}
-RETRY_REPRO {"cycles":2,"quoteAttempts":2,"restingOrders":0,"expectedAttemptsWithRetry":4}
-Test Files  3 passed (3)
-     Tests  33 passed (33)
+                                      Upstream   Candidate
+90 / 100 cap: increasing quote              25          10
+-90 / 100 cap: increasing quote             25          10
+flat / 100 cap: requested 250              250         100
+same mark, both rejected: attempts           2           4
+same mark, only bid rejected: attempts       2           3
+smaller pool ceiling: increasing quote       5           5
+healthy quotes, same mark: attempts          2           2
 ```
 
 ## Submission status

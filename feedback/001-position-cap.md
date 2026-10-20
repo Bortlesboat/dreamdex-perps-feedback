@@ -7,10 +7,11 @@ Area: app
 
 1. Follow the pinned installation in the repository README.
 2. Run `npm exec -- vitest run packages/perp-core/tests/bounty-maker.test.ts --reporter=verbose`.
-3. Inspect the `CAP_REPRO` result. The harness supplies a 90 USDso long position,
+3. Inspect the increasing-quote tests. The harness supplies a 90 USDso long position,
    a mark of 100, the default 100 USDso position cap, and default 25 USDso quote size.
    The mock pool ceiling permits the requested size.
-4. The real strategy asks `placePerp` to place the full 25 USDso long-side quote.
+4. The real strategy, `sizeForNotional`, `sizeOrder` and `placePerp` send the full
+   25 USDso long-side quote to the controlled SDK boundary.
 
 ## Expected
 
@@ -38,8 +39,8 @@ bot-specific position cap.
 the `wouldExceed` calculation and `sizeOrder` invocation use current inventory
 and the unadjusted `wanted` quantity.
 
-The harness asserts the requested order amount, not a live fill. Its placement mock
-returns a skipped order. The 115 result is the implied post-fill exposure at the
+The harness asserts the requested order amount, not a live fill. The controlled
+SDK boundary throws `PostOnlyWouldCross`; the real helper handles it. The 115 result is the implied post-fill exposure at the
 fixture mark, not an observed account balance. No contract vulnerability is alleged.
 
 ## Suggested correction
@@ -47,6 +48,12 @@ fixture mark, not an observed account balance. No contract vulnerability is alle
 Clamp the increasing side to remaining signed inventory headroom before lot alignment
 and pool sizing. Include resting increasing orders in worst-case exposure. Test long
 and short positions, near-cap inventory and quotes larger than the cap.
+
+The [candidate patch](../repro/candidate-fix.patch) corrects the quote-time sizing
+for both directions, retains the pool ceiling and rounds down to real lot/minimum
+rules. The same desired-contract assertions fail upstream and pass after the patch.
+This patch does not claim continuous risk enforcement through external orders,
+moving marks, fills or failed cancellations; those need order-state reconciliation.
 
 ## Environment
 
